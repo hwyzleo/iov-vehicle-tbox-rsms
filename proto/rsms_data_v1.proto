@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package tbox.mcu.rsms.v1;
+
+// 整车数据
+message VehicleData {
+    uint32 vehicle_state = 1; // 车辆状态
+    uint32 charging_state = 2; // 充电状态
+    uint32 running_mode = 3; // 运行模式
+    uint32 speed = 4; // 车速
+    uint32 total_odometer = 5; // 累计里程
+    uint32 total_voltage = 6; // 总电压
+    uint32 total_current = 7; // 总电流
+    uint32 soc = 8; // SOC
+    uint32 dcdc_state = 9; // DC/DC状态
+    bool driving = 10; // 有驱动力
+    bool braking = 11; // 有制动力
+    uint32 gear = 12; // 挡位
+    uint32 insulation_resistance = 13; // 绝缘电阻
+    uint32 accelerator_pedal_position = 14; // 加速踏板行程值
+    uint32 brake_pedal_position = 15; // 制动踏板状态
+}
+
+// 驱动电机
+message DriveMotor {
+    uint32 drive_motor_count = 1; // 驱动电机个数
+    repeated SingleDriveMotor drive_motor_list = 2; // 驱动电机总成信息列表
+}
+
+// 单个驱动电机
+message SingleDriveMotor {
+    uint32 sn = 1; // 驱动电机顺序号
+    uint32 state = 2; // 驱动电机状态
+    uint32 controller_temperature = 3; // 驱动电机控制器温度
+    uint32 speed = 4; // 驱动电机转速
+    uint32 torque = 5; // 驱动电机转矩
+    uint32 temperature = 6; // 驱动电机温度
+    uint32 controller_input_voltage = 7; // 电机控制器输入电压
+    uint32 controller_dc_bus_current = 8; // 电机控制器直流母线电流
+}
+
+// 车辆位置
+message Position {
+    bool position_valid = 1; // 定位是否有效
+    bool south_latitude = 2; // 纬度是否南纬
+    bool west_longitude = 3; // 经度是否西经
+    uint32 longitude = 4; // 经度
+    uint32 latitude = 5; // 纬度
+}
+
+// 极值数据
+message Extremum {
+    uint32 max_voltage_battery_device_no = 1; // 最高电压电池子系统号
+    uint32 max_voltage_cell_no = 2; // 最高电压电池单体代号
+    uint32 cell_max_voltage = 3; // 电池单体电压最高值
+    uint32 min_voltage_battery_device_no = 4; // 最低电压电池子系统号
+    uint32 min_voltage_cell_no = 5; // 最低电压电池单体代号
+    uint32 cell_min_voltage = 6; // 电池单体电压最低值
+    uint32 max_temperature_device_no = 7; // 最高温度子系统号
+    uint32 max_temperature_probe_no = 8; // 最高温度探针序号
+    uint32 max_temperature = 9; // 最高温度值
+    uint32 min_temperature_device_no = 10; // 最低温度子系统号
+    uint32 min_temperature_probe_no = 11; // 最低温度探针序号
+    uint32 min_temperature = 12; // 最低温度值
+}
+
+// 报警数据
+message Alarm {
+    uint32 max_alarm_level = 1; // 最高报警等级
+    uint32 alarm_flag = 2; // 通用报警标志
+    uint32 battery_fault_count = 3; // 可充电储能装置故障总数N1
+    repeated uint32 battery_fault_list = 4; // 可充电储能装置故障代码列表
+    uint32 drive_motor_fault_count = 5; // 驱动电机故障总数N2
+    repeated uint32 drive_motor_fault_list = 6; // 驱动电机故障代码列表
+    uint32 engine_fault_count = 7; // 发动机故障总数N3
+    repeated uint32 engine_fault_list = 8; // 发动机故障代码列表
+    uint32 other_fault_count = 9; // 其他故障总数N4
+    repeated uint32 other_fault_list = 10; // 其他故障代码列表
+}
+
+// 可充电储能装置电压数据
+message BatteryVoltage {
+    uint32 battery_count = 1; // 可充电储能子系统个数
+    repeated SingleBatteryVoltage battery_voltage_list = 2; // 可充电储能子系统电压信息列表
+}
+
+// 单个可充电储能子系统电压数据
+message SingleBatteryVoltage {
+    uint32 sn = 1; // 可充电储能子系统号
+    uint32 voltage = 2; // 可充电储能装置电压
+    uint32 current = 3; // 可充电储能装置电流
+    uint32 cell_count = 4; // 单体电池总数
+    uint32 frame_start_cell_sn = 5; // 本帧起始电池序号
+    uint32 frame_cell_count = 6; // 本帧单体电池总数
+    repeated uint32 cell_voltage_list = 7; // 单体电池电压列表
+}
+
+// 可充电储能装置温度数据
+message BatteryTemperature {
+    uint32 battery_count = 1; // 可充电储能子系统个数
+    repeated SingleBatteryTemperature battery_temperature_list = 2; // 可充电储能子系统温度信息列表
+}
+
+// 单个可充电储能子系统温度数据
+message SingleBatteryTemperature {
+    uint32 sn = 1; // 可充电储能子系统号
+    uint32 probe_count = 2; // 可充电储能温度探针个数
+    repeated uint32 temperatures = 3; // 可充电储能子系统各温度探针检测到的温度值
+}
+
+// 国标数据
+message RsmsData {
+    VehicleData vehicle_data = 1; // 整车数据
+    DriveMotor drive_motor = 2; // 驱动电机
+    Position position = 3; // 车辆位置
+    Extremum extremum = 4; // 极值数据
+    Alarm alarm = 5; // 报警数据
+    BatteryVoltage battery_voltage = 6; // 可充电储能装置电压数据
+    BatteryTemperature battery_temperature = 7; // 可充电储能装置温度数据
+}
