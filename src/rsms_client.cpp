@@ -19,12 +19,14 @@ RsmsClient &RsmsClient::get_instance() {
 
 bool RsmsClient::init() {
     load_config();
+    std::string vin = hwyz::Utils::global_read_string(hwyz::global_key_t::VIN);
     std::string iccid = hwyz::Utils::global_read_string(hwyz::global_key_t::CURRENT_ICCID);
     std::string battery_pack_sn = hwyz::Utils::global_read_string(hwyz::global_key_t::BATTERY_PACK_SN);
-    if (iccid.empty() || battery_pack_sn.empty()) {
-        spdlog::error("ICCID[{}]电池包序列号[{}]为空", iccid, battery_pack_sn);
+    if (vin.empty() || iccid.empty() || battery_pack_sn.empty()) {
+        spdlog::error("VIN[{}]ICCID[{}]电池包序列号[{}]为空", vin, iccid, battery_pack_sn);
         return false;
     }
+    vin_ = vin;
     iccid_ = iccid;
     battery_pack_sn_ = battery_pack_sn;
     return true;
@@ -806,6 +808,7 @@ std::vector<uint8_t> RsmsClient::build_vehicle_logout() {
 }
 
 uint8_t RsmsClient::calculate_check_code(std::vector<uint8_t> data_unit) {
+    spdlog::debug("计算长度[{}]", data_unit.size());
     if (data_unit.empty()) {
         return 0;
     }
@@ -829,7 +832,10 @@ std::vector<uint8_t> RsmsClient::build_message(command_flag_t command_flag, cons
     std::vector<uint8_t> data_unit_length = word_to_bytes(data_unit.size());
     std::copy(data_unit_length.begin(), data_unit_length.end(), message_bytes.begin() + 22);
     std::copy(data_unit.begin(), data_unit.end(), message_bytes.begin() + 24);
-    message_bytes[total_length - 1] = calculate_check_code(data_unit);
+    int check_length = 22 + data_unit.size();
+    std::vector<uint8_t> check_bytes(check_length);
+    std::copy(message_bytes.begin() + 2, message_bytes.end() - 1, check_bytes.begin());
+    message_bytes[total_length - 1] = calculate_check_code(check_bytes);
     return message_bytes;
 }
 
