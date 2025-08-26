@@ -76,6 +76,16 @@ public:
      */
     bool publish(int &mid, const std::string &topic, const void *payload = nullptr, int payload_len = 0, int qos = 1);
 
+    /**
+     * 发布
+     * @param mid 消息ID
+     * @param topic 主题
+     * @param payload 数据
+     * @param qos 消息质量
+     * @return 是否发布成功
+     */
+    bool publish(int &mid, const std::string &topic, std::vector<uint8_t> *payload = nullptr, int qos = 1);
+
     void on_connect(int rc) override;
 
     void on_disconnect(int rc) override;

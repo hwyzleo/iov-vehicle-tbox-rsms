@@ -129,9 +129,11 @@ bool RsmsClient::start() {
     if (is_tsp_login_) {
         login();
     }
-    collect_thread_ = std::thread(&RsmsClient::collect_thread, this);
-    reissue_thread_ = std::thread(&RsmsClient::reissue_thread, this);
     is_start_ = true;
+    spdlog::info("初始化采集线程");
+    collect_thread_ = std::thread(&RsmsClient::collect_thread, this);
+    spdlog::info("初始化补发线程");
+    reissue_thread_ = std::thread(&RsmsClient::reissue_thread, this);
     return true;
 }
 
@@ -155,7 +157,7 @@ bool RsmsClient::login() {
     std::vector<uint8_t> vehicle_login = build_vehicle_login();
     std::vector<uint8_t> message = build_message(VEHICLE_LOGIN, vehicle_login);
     int mid = 0;
-    MqttClient::get_instance().publish(mid, mqtt_topic_, message.data(), message.size(), 1);
+    MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
     is_vehicle_login_ = true;
     save_config();
 }
@@ -166,8 +168,7 @@ bool RsmsClient::collect_signal() {
     if (is_tsp_login_ && is_vehicle_login_) {
         int mid = 0;
         std::vector<uint8_t> message = build_message(REALTIME_REPORT, realtime_signal);
-        spdlog::debug("发送实时数据报文");
-        return MqttClient::get_instance().publish(mid, mqtt_topic_, message.data(), message.size(), 1);
+        return MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
     }
     reissue_messages_.push_back(realtime_signal);
 }
@@ -176,7 +177,7 @@ void RsmsClient::logout() {
     std::vector<uint8_t> vehicle_logout = build_vehicle_logout();
     std::vector<uint8_t> message = build_message(VEHICLE_LOGOUT, vehicle_logout);
     int mid = 0;
-    MqttClient::get_instance().publish(mid, mqtt_topic_, message.data(), message.size(), 1);
+    MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
 }
 
 std::vector<uint8_t> RsmsClient::get_current_time() {
@@ -252,52 +253,53 @@ std::vector<uint8_t> RsmsClient::build_realtime_signal() {
 }
 
 std::vector<uint8_t> RsmsClient::build_vehicle_data() {
-    std::vector<uint8_t> vehicle_data_bytes(20);
+    std::vector<uint8_t> vehicle_data_bytes(21);
+    vehicle_data_bytes[0] = 0x01; // 整车数据
     uint8_t vehicle_state;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_VEHICLE_STATE, vehicle_state)) {
-        vehicle_data_bytes[0] = vehicle_state;
+        vehicle_data_bytes[1] = vehicle_state;
     }
     uint8_t charging_state;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_CHARGING_STATE, charging_state)) {
-        vehicle_data_bytes[1] = charging_state;
+        vehicle_data_bytes[2] = charging_state;
     }
     uint8_t running_mode;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_RUNNING_MODE, running_mode)) {
-        vehicle_data_bytes[2] = running_mode;
+        vehicle_data_bytes[3] = running_mode;
     }
     uint16_t speed;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_SPEED, speed)) {
         std::vector<uint8_t> speed_bytes = word_to_bytes(speed);
-        vehicle_data_bytes[3] = speed_bytes[0];
-        vehicle_data_bytes[4] = speed_bytes[1];
+        vehicle_data_bytes[4] = speed_bytes[0];
+        vehicle_data_bytes[5] = speed_bytes[1];
     }
     uint32_t total_odometer;
     if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_TOTAL_ODOMETER, total_odometer)) {
         std::vector<uint8_t> total_odometer_bytes = dword_to_bytes(total_odometer);
-        vehicle_data_bytes[5] = total_odometer_bytes[0];
-        vehicle_data_bytes[6] = total_odometer_bytes[1];
-        vehicle_data_bytes[7] = total_odometer_bytes[2];
-        vehicle_data_bytes[8] = total_odometer_bytes[3];
+        vehicle_data_bytes[6] = total_odometer_bytes[0];
+        vehicle_data_bytes[7] = total_odometer_bytes[1];
+        vehicle_data_bytes[8] = total_odometer_bytes[2];
+        vehicle_data_bytes[9] = total_odometer_bytes[3];
     }
     uint16_t total_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_TOTAL_VOLTAGE, total_voltage)) {
         std::vector<uint8_t> total_voltage_bytes = word_to_bytes(total_voltage);
-        vehicle_data_bytes[9] = total_voltage_bytes[0];
-        vehicle_data_bytes[10] = total_voltage_bytes[1];
+        vehicle_data_bytes[10] = total_voltage_bytes[0];
+        vehicle_data_bytes[11] = total_voltage_bytes[1];
     }
     uint16_t total_current;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_TOTAL_CURRENT, total_current)) {
         std::vector<uint8_t> total_current_bytes = word_to_bytes(total_current);
-        vehicle_data_bytes[11] = total_current_bytes[0];
-        vehicle_data_bytes[12] = total_current_bytes[1];
+        vehicle_data_bytes[12] = total_current_bytes[0];
+        vehicle_data_bytes[13] = total_current_bytes[1];
     }
     uint8_t soc;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_SOC, soc)) {
-        vehicle_data_bytes[13] = soc;
+        vehicle_data_bytes[14] = soc;
     }
     uint8_t dcdc_state;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DCDC_STATE, dcdc_state)) {
-        vehicle_data_bytes[14] = dcdc_state;
+        vehicle_data_bytes[15] = dcdc_state;
     }
     uint8_t gear;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_GEAR, gear)) {
@@ -309,114 +311,116 @@ std::vector<uint8_t> RsmsClient::build_vehicle_data() {
         if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_BRAKING, braking)) {
             gear = (driving ? 1 : 0 << 4) + gear;
         }
-        vehicle_data_bytes[15] = gear;
+        vehicle_data_bytes[16] = gear;
     }
     uint16_t insulation_resistance;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_INSULATION_RESISTANCE, insulation_resistance)) {
         std::vector<uint8_t> insulation_resistance_bytes = word_to_bytes(insulation_resistance);
-        vehicle_data_bytes[16] = insulation_resistance_bytes[0];
-        vehicle_data_bytes[17] = insulation_resistance_bytes[1];
+        vehicle_data_bytes[17] = insulation_resistance_bytes[0];
+        vehicle_data_bytes[18] = insulation_resistance_bytes[1];
     }
     uint8_t accelerator_pedal_position;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_ACCELERATOR_PEDAL_POSITION,
                                                  accelerator_pedal_position)) {
-        vehicle_data_bytes[18] = accelerator_pedal_position;
+        vehicle_data_bytes[19] = accelerator_pedal_position;
     }
     uint8_t brake_pedal_position;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BRAKE_PEDAL_POSITION, brake_pedal_position)) {
-        vehicle_data_bytes[19] = brake_pedal_position;
+        vehicle_data_bytes[20] = brake_pedal_position;
     }
     return vehicle_data_bytes;
 }
 
 std::vector<uint8_t> RsmsClient::build_drive_motor() {
-    std::vector<uint8_t> drive_motor_bytes(25);
-    drive_motor_bytes[0] = 0x02; // 2个电机
-    drive_motor_bytes[1] = 0x01; // 第1个电机
+    std::vector<uint8_t> drive_motor_bytes(26);
+    drive_motor_bytes[0] = 0x02; // 驱动电机数据
+    drive_motor_bytes[1] = 0x02; // 2个电机
+    drive_motor_bytes[2] = 0x01; // 第1个电机
     uint8_t dm1_state;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM1_STATE, dm1_state)) {
-        drive_motor_bytes[2] = dm1_state;
+        drive_motor_bytes[3] = dm1_state;
     }
     uint8_t dm1_controller_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM1_CONTROLLER_TEMPERATURE,
                                                  dm1_controller_temperature)) {
-        drive_motor_bytes[3] = dm1_controller_temperature;
+        drive_motor_bytes[4] = dm1_controller_temperature;
     }
     uint16_t dm1_speed;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM1_SPEED, dm1_speed)) {
         std::vector<uint8_t> dm1_speed_bytes = word_to_bytes(dm1_speed);
-        drive_motor_bytes[4] = dm1_speed_bytes[0];
-        drive_motor_bytes[5] = dm1_speed_bytes[1];
+        drive_motor_bytes[5] = dm1_speed_bytes[0];
+        drive_motor_bytes[6] = dm1_speed_bytes[1];
     }
     uint16_t dm1_torque;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM1_TORQUE, dm1_torque)) {
         std::vector<uint8_t> dm1_torque_bytes = word_to_bytes(dm1_torque);
-        drive_motor_bytes[6] = dm1_torque_bytes[0];
-        drive_motor_bytes[7] = dm1_torque_bytes[1];
+        drive_motor_bytes[7] = dm1_torque_bytes[0];
+        drive_motor_bytes[8] = dm1_torque_bytes[1];
     }
     uint8_t dm1_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM1_TEMPERATURE, dm1_temperature)) {
-        drive_motor_bytes[8] = dm1_temperature;
+        drive_motor_bytes[9] = dm1_temperature;
     }
     uint16_t dm1_controller_input_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM1_CONTROLLER_INPUT_VOLTAGE,
                                                  dm1_controller_input_voltage)) {
         std::vector<uint8_t> dm1_controller_input_voltage_bytes = word_to_bytes(dm1_controller_input_voltage);
-        drive_motor_bytes[9] = dm1_controller_input_voltage_bytes[0];
-        drive_motor_bytes[10] = dm1_controller_input_voltage_bytes[1];
+        drive_motor_bytes[10] = dm1_controller_input_voltage_bytes[0];
+        drive_motor_bytes[11] = dm1_controller_input_voltage_bytes[1];
     }
     uint16_t dm1_controller_dc_bus_current;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM1_CONTROLLER_DC_BUS_CURRENT,
                                                  dm1_controller_dc_bus_current)) {
         std::vector<uint8_t> dm1_controller_dc_bus_current_bytes = word_to_bytes(dm1_controller_dc_bus_current);
-        drive_motor_bytes[11] = dm1_controller_dc_bus_current_bytes[0];
-        drive_motor_bytes[12] = dm1_controller_dc_bus_current_bytes[1];
+        drive_motor_bytes[12] = dm1_controller_dc_bus_current_bytes[0];
+        drive_motor_bytes[13] = dm1_controller_dc_bus_current_bytes[1];
     }
-    drive_motor_bytes[13] = 0x02; // 第2个电机
+    drive_motor_bytes[14] = 0x02; // 第2个电机
     uint8_t dm2_state;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM2_STATE, dm2_state)) {
-        drive_motor_bytes[14] = dm2_state;
+        drive_motor_bytes[15] = dm2_state;
     }
     uint8_t dm2_controller_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM2_CONTROLLER_TEMPERATURE,
                                                  dm2_controller_temperature)) {
-        drive_motor_bytes[15] = dm2_controller_temperature;
+        drive_motor_bytes[16] = dm2_controller_temperature;
     }
     uint16_t dm2_speed;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM2_SPEED, dm2_speed)) {
         std::vector<uint8_t> dm2_speed_bytes = word_to_bytes(dm2_speed);
-        drive_motor_bytes[16] = dm2_speed_bytes[0];
-        drive_motor_bytes[17] = dm2_speed_bytes[1];
+        drive_motor_bytes[17] = dm2_speed_bytes[0];
+        drive_motor_bytes[18] = dm2_speed_bytes[1];
     }
     uint16_t dm2_torque;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM2_TORQUE, dm2_torque)) {
         std::vector<uint8_t> dm2_torque_bytes = word_to_bytes(dm2_torque);
-        drive_motor_bytes[18] = dm2_torque_bytes[0];
-        drive_motor_bytes[19] = dm2_torque_bytes[1];
+        drive_motor_bytes[19] = dm2_torque_bytes[0];
+        drive_motor_bytes[20] = dm2_torque_bytes[1];
     }
     uint8_t dm2_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_DM2_TEMPERATURE, dm2_temperature)) {
-        drive_motor_bytes[20] = dm2_temperature;
+        drive_motor_bytes[21] = dm2_temperature;
     }
     uint16_t dm2_controller_input_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM2_CONTROLLER_INPUT_VOLTAGE,
                                                  dm2_controller_input_voltage)) {
         std::vector<uint8_t> dm2_controller_input_voltage_bytes = word_to_bytes(dm2_controller_input_voltage);
-        drive_motor_bytes[21] = dm2_controller_input_voltage_bytes[0];
-        drive_motor_bytes[22] = dm2_controller_input_voltage_bytes[1];
+        drive_motor_bytes[22] = dm2_controller_input_voltage_bytes[0];
+        drive_motor_bytes[23] = dm2_controller_input_voltage_bytes[1];
     }
     uint16_t dm2_controller_dc_bus_current;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_DM2_CONTROLLER_DC_BUS_CURRENT,
                                                  dm2_controller_dc_bus_current)) {
         std::vector<uint8_t> dm2_controller_dc_bus_current_bytes = word_to_bytes(dm2_controller_dc_bus_current);
-        drive_motor_bytes[23] = dm2_controller_dc_bus_current_bytes[0];
-        drive_motor_bytes[24] = dm2_controller_dc_bus_current_bytes[1];
+        drive_motor_bytes[24] = dm2_controller_dc_bus_current_bytes[0];
+        drive_motor_bytes[25] = dm2_controller_dc_bus_current_bytes[1];
     }
     return drive_motor_bytes;
 }
 
 std::vector<uint8_t> RsmsClient::build_position() {
-    std::vector<uint8_t> position_bytes(9);
+    std::vector<uint8_t> position_bytes(10);
+    position_bytes[0] = 0x05; // 车辆位置数据
     bool position_valid;
     if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_POSITION_VALID, position_valid)) {
         uint8_t position = (position_valid) ? 1 : 0;
@@ -428,86 +432,87 @@ std::vector<uint8_t> RsmsClient::build_position() {
         if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_WEST_LONGITUDE, west_longitude)) {
             position = position + ((west_longitude ? 1 : 0) << 2);
         }
-        position_bytes[0] = position;
+        position_bytes[1] = position;
     }
     uint32_t longitude;
     if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_LONGITUDE, longitude)) {
         std::vector<uint8_t> longitude_bytes = dword_to_bytes(longitude);
-        position_bytes[1] = longitude_bytes[0];
-        position_bytes[2] = longitude_bytes[1];
-        position_bytes[3] = longitude_bytes[2];
-        position_bytes[4] = longitude_bytes[3];
+        position_bytes[2] = longitude_bytes[0];
+        position_bytes[3] = longitude_bytes[1];
+        position_bytes[4] = longitude_bytes[2];
+        position_bytes[5] = longitude_bytes[3];
     }
     uint32_t latitude;
     if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_LATITUDE, latitude)) {
         std::vector<uint8_t> latitude_bytes = dword_to_bytes(latitude);
-        position_bytes[5] = latitude_bytes[0];
-        position_bytes[6] = latitude_bytes[1];
-        position_bytes[7] = latitude_bytes[2];
-        position_bytes[8] = latitude_bytes[3];
+        position_bytes[6] = latitude_bytes[0];
+        position_bytes[7] = latitude_bytes[1];
+        position_bytes[8] = latitude_bytes[2];
+        position_bytes[9] = latitude_bytes[3];
     }
     return position_bytes;
 }
 
 std::vector<uint8_t> RsmsClient::build_extremum() {
-    std::vector<uint8_t> extremum_bytes(14);
+    std::vector<uint8_t> extremum_bytes(15);
+    extremum_bytes[0] = 0x06; // 极值数据
     uint8_t max_voltage_battery_device_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_VOLTAGE_BATTERY_DEVICE_NO,
                                                  max_voltage_battery_device_no)) {
-        extremum_bytes[0] = max_voltage_battery_device_no;
+        extremum_bytes[1] = max_voltage_battery_device_no;
     }
     uint8_t max_voltage_cell_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_VOLTAGE_CELL_NO, max_voltage_cell_no)) {
-        extremum_bytes[1] = max_voltage_cell_no;
+        extremum_bytes[2] = max_voltage_cell_no;
     }
     uint16_t cell_max_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_CELL_MAX_VOLTAGE, cell_max_voltage)) {
         std::vector<uint8_t> cell_max_voltage_bytes = word_to_bytes(cell_max_voltage);
-        extremum_bytes[2] = cell_max_voltage_bytes[0];
-        extremum_bytes[3] = cell_max_voltage_bytes[1];
+        extremum_bytes[3] = cell_max_voltage_bytes[0];
+        extremum_bytes[4] = cell_max_voltage_bytes[1];
     }
     uint8_t min_voltage_battery_device_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MIN_VOLTAGE_BATTERY_DEVICE_NO,
                                                  min_voltage_battery_device_no)) {
-        extremum_bytes[4] = min_voltage_battery_device_no;
+        extremum_bytes[5] = min_voltage_battery_device_no;
     }
     uint8_t min_voltage_cell_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MIN_VOLTAGE_CELL_NO, min_voltage_cell_no)) {
-        extremum_bytes[5] = min_voltage_cell_no;
+        extremum_bytes[6] = min_voltage_cell_no;
     }
     uint16_t cell_min_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_CELL_MIN_VOLTAGE, cell_min_voltage)) {
         std::vector<uint8_t> cell_min_voltage_bytes = word_to_bytes(cell_min_voltage);
-        extremum_bytes[6] = cell_min_voltage_bytes[0];
-        extremum_bytes[7] = cell_min_voltage_bytes[1];
+        extremum_bytes[7] = cell_min_voltage_bytes[0];
+        extremum_bytes[8] = cell_min_voltage_bytes[1];
     }
     uint8_t max_temperature_device_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_TEMPERATURE_DEVICE_NO,
                                                  max_temperature_device_no)) {
-        extremum_bytes[8] = max_temperature_device_no;
+        extremum_bytes[9] = max_temperature_device_no;
     }
     uint8_t max_temperature_probe_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_TEMPERATURE_PROBE_NO,
                                                  max_temperature_probe_no)) {
-        extremum_bytes[9] = max_temperature_probe_no;
+        extremum_bytes[10] = max_temperature_probe_no;
     }
     uint8_t max_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_TEMPERATURE, max_temperature)) {
-        extremum_bytes[10] = max_temperature;
+        extremum_bytes[11] = max_temperature;
     }
     uint8_t min_temperature_device_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MIN_TEMPERATURE_DEVICE_NO,
                                                  min_temperature_device_no)) {
-        extremum_bytes[11] = min_temperature_device_no;
+        extremum_bytes[12] = min_temperature_device_no;
     }
     uint8_t min_temperature_probe_no;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MIN_TEMPERATURE_PROBE_NO,
                                                  min_temperature_probe_no)) {
-        extremum_bytes[12] = min_temperature_probe_no;
+        extremum_bytes[13] = min_temperature_probe_no;
     }
     uint8_t min_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MIN_TEMPERATURE, min_temperature)) {
-        extremum_bytes[13] = min_temperature;
+        extremum_bytes[14] = min_temperature;
     }
     return extremum_bytes;
 }
@@ -530,268 +535,240 @@ std::vector<uint8_t> RsmsClient::build_alarm() {
         return {};
     }
     int total_size =
-            9 + battery_fault_count * 4 + drive_motor_fault_count * 4 + engine_fault_count * 4 + other_fault_count * 4;
+            10 + battery_fault_count * 4 + drive_motor_fault_count * 4 + engine_fault_count * 4 + other_fault_count * 4;
     std::vector<uint8_t> alarm_bytes(total_size);
+    alarm_bytes[0] = 0x07; // 报警数据
     uint8_t max_alarm_level;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_ALARM_LEVEL, max_alarm_level)) {
-        alarm_bytes[0] = max_alarm_level;
+        alarm_bytes[1] = max_alarm_level;
     }
     uint32_t alarm_flag;
     if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_ALARM_FLAG, alarm_flag)) {
         std::vector<uint8_t> alarm_flag_bytes = dword_to_bytes(alarm_flag);
-        alarm_bytes[1] = alarm_flag_bytes[0];
-        alarm_bytes[2] = alarm_flag_bytes[1];
-        alarm_bytes[3] = alarm_flag_bytes[2];
-        alarm_bytes[4] = alarm_flag_bytes[3];
+        alarm_bytes[2] = alarm_flag_bytes[0];
+        alarm_bytes[3] = alarm_flag_bytes[1];
+        alarm_bytes[4] = alarm_flag_bytes[2];
+        alarm_bytes[5] = alarm_flag_bytes[3];
     }
     // 默认现在都是0
-    alarm_bytes[5] = battery_fault_count;
-    alarm_bytes[6] = drive_motor_fault_count;
-    alarm_bytes[7] = engine_fault_count;
-    alarm_bytes[8] = other_fault_count;
+    alarm_bytes[6] = battery_fault_count;
+    alarm_bytes[7] = drive_motor_fault_count;
+    alarm_bytes[8] = engine_fault_count;
+    alarm_bytes[9] = other_fault_count;
     return alarm_bytes;
 }
 
 std::vector<uint8_t> RsmsClient::build_battery_voltage() {
-    std::vector<uint8_t> battery_voltage_bytes(75);
-    battery_voltage_bytes[0] = 0x01; // 电池包1个
-    battery_voltage_bytes[1] = 0x01; // 第1个电池包
+    std::vector<uint8_t> battery_voltage_bytes(44);
+    battery_voltage_bytes[0] = 0x08; // 可充电储能装置电压数据
+    battery_voltage_bytes[1] = 0x01; // 电池包1个
+    battery_voltage_bytes[2] = 0x01; // 第1个电池包
     uint16_t battery1_voltage;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_VOLTAGE, battery1_voltage)) {
         std::vector<uint8_t> battery1_voltage_bytes = word_to_bytes(battery1_voltage);
-        battery_voltage_bytes[2] = battery1_voltage_bytes[0];
-        battery_voltage_bytes[3] = battery1_voltage_bytes[1];
+        battery_voltage_bytes[3] = battery1_voltage_bytes[0];
+        battery_voltage_bytes[4] = battery1_voltage_bytes[1];
     }
     uint16_t battery1_current;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CURRENT, battery1_current)) {
         std::vector<uint8_t> battery1_current_bytes = word_to_bytes(battery1_current);
-        battery_voltage_bytes[4] = battery1_current_bytes[0];
-        battery_voltage_bytes[5] = battery1_current_bytes[1];
+        battery_voltage_bytes[5] = battery1_current_bytes[0];
+        battery_voltage_bytes[6] = battery1_current_bytes[1];
     }
     uint16_t battery1_cell_count;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL_COUNT, battery1_cell_count)) {
         std::vector<uint8_t> battery1_cell_count_bytes = word_to_bytes(battery1_cell_count);
-        battery_voltage_bytes[6] = battery1_cell_count_bytes[0];
-        battery_voltage_bytes[7] = battery1_cell_count_bytes[1];
-        battery_voltage_bytes[8] = 0x01; // 起始电池序号
-        battery_voltage_bytes[9] = battery1_cell_count_bytes[0];
-        battery_voltage_bytes[10] = battery1_cell_count_bytes[1];
+        battery_voltage_bytes[7] = battery1_cell_count_bytes[0];
+        battery_voltage_bytes[8] = battery1_cell_count_bytes[1];
+        std::vector<uint8_t> frame_sn_bytes = word_to_bytes(1); // 起始电池序号
+        battery_voltage_bytes[9] = frame_sn_bytes[0];
+        battery_voltage_bytes[10] = frame_sn_bytes[1];
+        battery_voltage_bytes[11] = battery1_cell_count;
     }
-    uint32_t battery1_cell1_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL1_VOLTAGE, battery1_cell1_voltage)) {
-        std::vector<uint8_t> battery1_cell1_voltage_bytes = dword_to_bytes(battery1_cell1_voltage);
-        battery_voltage_bytes[11] = battery1_cell1_voltage_bytes[0];
-        battery_voltage_bytes[12] = battery1_cell1_voltage_bytes[1];
-        battery_voltage_bytes[13] = battery1_cell1_voltage_bytes[2];
-        battery_voltage_bytes[14] = battery1_cell1_voltage_bytes[3];
+    uint16_t battery1_cell1_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL1_VOLTAGE, battery1_cell1_voltage)) {
+        std::vector<uint8_t> battery1_cell1_voltage_bytes = word_to_bytes(battery1_cell1_voltage);
+        battery_voltage_bytes[12] = battery1_cell1_voltage_bytes[0];
+        battery_voltage_bytes[13] = battery1_cell1_voltage_bytes[1];
     }
-    uint32_t battery1_cell2_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL2_VOLTAGE, battery1_cell2_voltage)) {
-        std::vector<uint8_t> battery1_cell2_voltage_bytes = dword_to_bytes(battery1_cell2_voltage);
-        battery_voltage_bytes[15] = battery1_cell2_voltage_bytes[0];
-        battery_voltage_bytes[16] = battery1_cell2_voltage_bytes[1];
-        battery_voltage_bytes[17] = battery1_cell2_voltage_bytes[2];
-        battery_voltage_bytes[18] = battery1_cell2_voltage_bytes[3];
+    uint16_t battery1_cell2_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL2_VOLTAGE, battery1_cell2_voltage)) {
+        std::vector<uint8_t> battery1_cell2_voltage_bytes = word_to_bytes(battery1_cell2_voltage);
+        battery_voltage_bytes[14] = battery1_cell2_voltage_bytes[0];
+        battery_voltage_bytes[15] = battery1_cell2_voltage_bytes[1];
     }
-    uint32_t battery1_cell3_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL3_VOLTAGE, battery1_cell3_voltage)) {
-        std::vector<uint8_t> battery1_cell3_voltage_bytes = dword_to_bytes(battery1_cell3_voltage);
-        battery_voltage_bytes[19] = battery1_cell3_voltage_bytes[0];
-        battery_voltage_bytes[20] = battery1_cell3_voltage_bytes[1];
-        battery_voltage_bytes[21] = battery1_cell3_voltage_bytes[2];
-        battery_voltage_bytes[22] = battery1_cell3_voltage_bytes[3];
+    uint16_t battery1_cell3_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL3_VOLTAGE, battery1_cell3_voltage)) {
+        std::vector<uint8_t> battery1_cell3_voltage_bytes = word_to_bytes(battery1_cell3_voltage);
+        battery_voltage_bytes[16] = battery1_cell3_voltage_bytes[0];
+        battery_voltage_bytes[17] = battery1_cell3_voltage_bytes[1];
     }
-    uint32_t battery1_cell4_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL4_VOLTAGE, battery1_cell4_voltage)) {
-        std::vector<uint8_t> battery1_cell4_voltage_bytes = dword_to_bytes(battery1_cell4_voltage);
-        battery_voltage_bytes[23] = battery1_cell4_voltage_bytes[0];
-        battery_voltage_bytes[24] = battery1_cell4_voltage_bytes[1];
-        battery_voltage_bytes[25] = battery1_cell4_voltage_bytes[2];
-        battery_voltage_bytes[26] = battery1_cell4_voltage_bytes[3];
+    uint16_t battery1_cell4_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL4_VOLTAGE, battery1_cell4_voltage)) {
+        std::vector<uint8_t> battery1_cell4_voltage_bytes = word_to_bytes(battery1_cell4_voltage);
+        battery_voltage_bytes[18] = battery1_cell4_voltage_bytes[0];
+        battery_voltage_bytes[19] = battery1_cell4_voltage_bytes[1];
     }
-    uint32_t battery1_cell5_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL5_VOLTAGE, battery1_cell5_voltage)) {
-        std::vector<uint8_t> battery1_cell5_voltage_bytes = dword_to_bytes(battery1_cell5_voltage);
-        battery_voltage_bytes[27] = battery1_cell5_voltage_bytes[0];
-        battery_voltage_bytes[28] = battery1_cell5_voltage_bytes[1];
-        battery_voltage_bytes[29] = battery1_cell5_voltage_bytes[2];
-        battery_voltage_bytes[30] = battery1_cell5_voltage_bytes[3];
+    uint16_t battery1_cell5_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL5_VOLTAGE, battery1_cell5_voltage)) {
+        std::vector<uint8_t> battery1_cell5_voltage_bytes = word_to_bytes(battery1_cell5_voltage);
+        battery_voltage_bytes[20] = battery1_cell5_voltage_bytes[0];
+        battery_voltage_bytes[21] = battery1_cell5_voltage_bytes[1];
     }
-    uint32_t battery1_cell6_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL6_VOLTAGE, battery1_cell6_voltage)) {
-        std::vector<uint8_t> battery1_cell6_voltage_bytes = dword_to_bytes(battery1_cell6_voltage);
-        battery_voltage_bytes[31] = battery1_cell6_voltage_bytes[0];
-        battery_voltage_bytes[32] = battery1_cell6_voltage_bytes[1];
-        battery_voltage_bytes[33] = battery1_cell6_voltage_bytes[2];
-        battery_voltage_bytes[34] = battery1_cell6_voltage_bytes[3];
+    uint16_t battery1_cell6_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL6_VOLTAGE, battery1_cell6_voltage)) {
+        std::vector<uint8_t> battery1_cell6_voltage_bytes = word_to_bytes(battery1_cell6_voltage);
+        battery_voltage_bytes[22] = battery1_cell6_voltage_bytes[0];
+        battery_voltage_bytes[23] = battery1_cell6_voltage_bytes[1];
     }
-    uint32_t battery1_cell7_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL7_VOLTAGE, battery1_cell7_voltage)) {
-        std::vector<uint8_t> battery1_cell7_voltage_bytes = dword_to_bytes(battery1_cell7_voltage);
-        battery_voltage_bytes[35] = battery1_cell7_voltage_bytes[0];
-        battery_voltage_bytes[36] = battery1_cell7_voltage_bytes[1];
-        battery_voltage_bytes[37] = battery1_cell7_voltage_bytes[2];
-        battery_voltage_bytes[38] = battery1_cell7_voltage_bytes[3];
+    uint16_t battery1_cell7_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL7_VOLTAGE, battery1_cell7_voltage)) {
+        std::vector<uint8_t> battery1_cell7_voltage_bytes = word_to_bytes(battery1_cell7_voltage);
+        battery_voltage_bytes[24] = battery1_cell7_voltage_bytes[0];
+        battery_voltage_bytes[25] = battery1_cell7_voltage_bytes[1];
     }
-    uint32_t battery1_cell8_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL8_VOLTAGE, battery1_cell8_voltage)) {
-        std::vector<uint8_t> battery1_cell8_voltage_bytes = dword_to_bytes(battery1_cell8_voltage);
-        battery_voltage_bytes[39] = battery1_cell8_voltage_bytes[0];
-        battery_voltage_bytes[40] = battery1_cell8_voltage_bytes[1];
-        battery_voltage_bytes[41] = battery1_cell8_voltage_bytes[2];
-        battery_voltage_bytes[42] = battery1_cell8_voltage_bytes[3];
+    uint16_t battery1_cell8_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL8_VOLTAGE, battery1_cell8_voltage)) {
+        std::vector<uint8_t> battery1_cell8_voltage_bytes = word_to_bytes(battery1_cell8_voltage);
+        battery_voltage_bytes[26] = battery1_cell8_voltage_bytes[0];
+        battery_voltage_bytes[27] = battery1_cell8_voltage_bytes[1];
     }
-    uint32_t battery1_cell9_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL9_VOLTAGE, battery1_cell9_voltage)) {
-        std::vector<uint8_t> battery1_cell9_voltage_bytes = dword_to_bytes(battery1_cell9_voltage);
-        battery_voltage_bytes[43] = battery1_cell9_voltage_bytes[0];
-        battery_voltage_bytes[44] = battery1_cell9_voltage_bytes[1];
-        battery_voltage_bytes[45] = battery1_cell9_voltage_bytes[2];
-        battery_voltage_bytes[46] = battery1_cell9_voltage_bytes[3];
+    uint16_t battery1_cell9_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL9_VOLTAGE, battery1_cell9_voltage)) {
+        std::vector<uint8_t> battery1_cell9_voltage_bytes = word_to_bytes(battery1_cell9_voltage);
+        battery_voltage_bytes[28] = battery1_cell9_voltage_bytes[0];
+        battery_voltage_bytes[29] = battery1_cell9_voltage_bytes[1];
     }
-    uint32_t battery1_cell10_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL10_VOLTAGE, battery1_cell10_voltage)) {
-        std::vector<uint8_t> battery1_cell10_voltage_bytes = dword_to_bytes(battery1_cell10_voltage);
-        battery_voltage_bytes[47] = battery1_cell10_voltage_bytes[0];
-        battery_voltage_bytes[48] = battery1_cell10_voltage_bytes[1];
-        battery_voltage_bytes[49] = battery1_cell10_voltage_bytes[2];
-        battery_voltage_bytes[50] = battery1_cell10_voltage_bytes[3];
+    uint16_t battery1_cell10_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL10_VOLTAGE, battery1_cell10_voltage)) {
+        std::vector<uint8_t> battery1_cell10_voltage_bytes = word_to_bytes(battery1_cell10_voltage);
+        battery_voltage_bytes[30] = battery1_cell10_voltage_bytes[0];
+        battery_voltage_bytes[31] = battery1_cell10_voltage_bytes[1];
     }
-    uint32_t battery1_cell11_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL11_VOLTAGE, battery1_cell11_voltage)) {
-        std::vector<uint8_t> battery1_cell11_voltage_bytes = dword_to_bytes(battery1_cell11_voltage);
-        battery_voltage_bytes[51] = battery1_cell11_voltage_bytes[0];
-        battery_voltage_bytes[52] = battery1_cell11_voltage_bytes[1];
-        battery_voltage_bytes[53] = battery1_cell11_voltage_bytes[2];
-        battery_voltage_bytes[54] = battery1_cell11_voltage_bytes[3];
+    uint16_t battery1_cell11_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL11_VOLTAGE, battery1_cell11_voltage)) {
+        std::vector<uint8_t> battery1_cell11_voltage_bytes = word_to_bytes(battery1_cell11_voltage);
+        battery_voltage_bytes[32] = battery1_cell11_voltage_bytes[0];
+        battery_voltage_bytes[33] = battery1_cell11_voltage_bytes[1];
     }
-    uint32_t battery1_cell12_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL12_VOLTAGE, battery1_cell12_voltage)) {
-        std::vector<uint8_t> battery1_cell12_voltage_bytes = dword_to_bytes(battery1_cell12_voltage);
-        battery_voltage_bytes[55] = battery1_cell12_voltage_bytes[0];
-        battery_voltage_bytes[56] = battery1_cell12_voltage_bytes[1];
-        battery_voltage_bytes[57] = battery1_cell12_voltage_bytes[2];
-        battery_voltage_bytes[58] = battery1_cell12_voltage_bytes[3];
+    uint16_t battery1_cell12_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL12_VOLTAGE, battery1_cell12_voltage)) {
+        std::vector<uint8_t> battery1_cell12_voltage_bytes = word_to_bytes(battery1_cell12_voltage);
+        battery_voltage_bytes[34] = battery1_cell12_voltage_bytes[0];
+        battery_voltage_bytes[35] = battery1_cell12_voltage_bytes[1];
     }
-    uint32_t battery1_cell13_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL13_VOLTAGE, battery1_cell13_voltage)) {
-        std::vector<uint8_t> battery1_cell13_voltage_bytes = dword_to_bytes(battery1_cell13_voltage);
-        battery_voltage_bytes[59] = battery1_cell13_voltage_bytes[0];
-        battery_voltage_bytes[60] = battery1_cell13_voltage_bytes[1];
-        battery_voltage_bytes[61] = battery1_cell13_voltage_bytes[2];
-        battery_voltage_bytes[62] = battery1_cell13_voltage_bytes[3];
+    uint16_t battery1_cell13_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL13_VOLTAGE, battery1_cell13_voltage)) {
+        std::vector<uint8_t> battery1_cell13_voltage_bytes = word_to_bytes(battery1_cell13_voltage);
+        battery_voltage_bytes[36] = battery1_cell13_voltage_bytes[0];
+        battery_voltage_bytes[37] = battery1_cell13_voltage_bytes[1];
     }
-    uint32_t battery1_cell14_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL14_VOLTAGE, battery1_cell14_voltage)) {
-        std::vector<uint8_t> battery1_cell14_voltage_bytes = dword_to_bytes(battery1_cell14_voltage);
-        battery_voltage_bytes[63] = battery1_cell14_voltage_bytes[0];
-        battery_voltage_bytes[64] = battery1_cell14_voltage_bytes[1];
-        battery_voltage_bytes[65] = battery1_cell14_voltage_bytes[2];
-        battery_voltage_bytes[66] = battery1_cell14_voltage_bytes[3];
+    uint16_t battery1_cell14_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL14_VOLTAGE, battery1_cell14_voltage)) {
+        std::vector<uint8_t> battery1_cell14_voltage_bytes = word_to_bytes(battery1_cell14_voltage);
+        battery_voltage_bytes[38] = battery1_cell14_voltage_bytes[0];
+        battery_voltage_bytes[39] = battery1_cell14_voltage_bytes[1];
     }
-    uint32_t battery1_cell15_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL15_VOLTAGE, battery1_cell15_voltage)) {
-        std::vector<uint8_t> battery1_cell15_voltage_bytes = dword_to_bytes(battery1_cell15_voltage);
-        battery_voltage_bytes[67] = battery1_cell15_voltage_bytes[0];
-        battery_voltage_bytes[68] = battery1_cell15_voltage_bytes[1];
-        battery_voltage_bytes[69] = battery1_cell15_voltage_bytes[2];
-        battery_voltage_bytes[70] = battery1_cell15_voltage_bytes[3];
+    uint16_t battery1_cell15_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL15_VOLTAGE, battery1_cell15_voltage)) {
+        std::vector<uint8_t> battery1_cell15_voltage_bytes = word_to_bytes(battery1_cell15_voltage);
+        battery_voltage_bytes[40] = battery1_cell15_voltage_bytes[0];
+        battery_voltage_bytes[41] = battery1_cell15_voltage_bytes[1];
     }
-    uint32_t battery1_cell16_voltage;
-    if (RsmsSignalCache::get_instance().get_dword(signal_t::SIGNAL_BATTERY1_CELL16_VOLTAGE, battery1_cell16_voltage)) {
-        std::vector<uint8_t> battery1_cell16_voltage_bytes = dword_to_bytes(battery1_cell16_voltage);
-        battery_voltage_bytes[71] = battery1_cell16_voltage_bytes[0];
-        battery_voltage_bytes[72] = battery1_cell16_voltage_bytes[1];
-        battery_voltage_bytes[73] = battery1_cell16_voltage_bytes[2];
-        battery_voltage_bytes[74] = battery1_cell16_voltage_bytes[3];
+    uint16_t battery1_cell16_voltage;
+    if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_CELL16_VOLTAGE, battery1_cell16_voltage)) {
+        std::vector<uint8_t> battery1_cell16_voltage_bytes = word_to_bytes(battery1_cell16_voltage);
+        battery_voltage_bytes[42] = battery1_cell16_voltage_bytes[0];
+        battery_voltage_bytes[43] = battery1_cell16_voltage_bytes[1];
     }
     return battery_voltage_bytes;
 }
 
 std::vector<uint8_t> RsmsClient::build_battery_temperature() {
-    std::vector<uint8_t> battery_temperature_bytes(19);
-    battery_temperature_bytes[0] = 0x01;
+    std::vector<uint8_t> battery_temperature_bytes(20);
+    battery_temperature_bytes[0] = 0x09; // 可充电储能装置温度数据
     battery_temperature_bytes[1] = 0x01;
+    battery_temperature_bytes[2] = 0x01;
     uint16_t battery1_probe_count;
     if (RsmsSignalCache::get_instance().get_word(signal_t::SIGNAL_BATTERY1_PROBE_COUNT, battery1_probe_count)) {
         std::vector<uint8_t> battery1_probe_count_bytes = word_to_bytes(battery1_probe_count);
-        battery_temperature_bytes[2] = battery1_probe_count_bytes[0];
-        battery_temperature_bytes[3] = battery1_probe_count_bytes[1];
+        battery_temperature_bytes[3] = battery1_probe_count_bytes[0];
+        battery_temperature_bytes[4] = battery1_probe_count_bytes[1];
     }
     uint8_t battery1_probe1_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE1_TEMPERATURE,
                                                  battery1_probe1_temperature)) {
-        battery_temperature_bytes[4] = battery1_probe1_temperature;
+        battery_temperature_bytes[5] = battery1_probe1_temperature;
     }
     uint8_t battery1_probe2_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE2_TEMPERATURE,
                                                  battery1_probe2_temperature)) {
-        battery_temperature_bytes[5] = battery1_probe2_temperature;
+        battery_temperature_bytes[6] = battery1_probe2_temperature;
     }
     uint8_t battery1_probe3_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE3_TEMPERATURE,
                                                  battery1_probe3_temperature)) {
-        battery_temperature_bytes[6] = battery1_probe3_temperature;
+        battery_temperature_bytes[7] = battery1_probe3_temperature;
     }
     uint8_t battery1_probe4_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE4_TEMPERATURE,
                                                  battery1_probe4_temperature)) {
-        battery_temperature_bytes[7] = battery1_probe4_temperature;
+        battery_temperature_bytes[8] = battery1_probe4_temperature;
     }
     uint8_t battery1_probe5_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE5_TEMPERATURE,
                                                  battery1_probe5_temperature)) {
-        battery_temperature_bytes[8] = battery1_probe5_temperature;
+        battery_temperature_bytes[9] = battery1_probe5_temperature;
     }
     uint8_t battery1_probe6_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE6_TEMPERATURE,
                                                  battery1_probe6_temperature)) {
-        battery_temperature_bytes[9] = battery1_probe6_temperature;
+        battery_temperature_bytes[10] = battery1_probe6_temperature;
     }
     uint8_t battery1_probe7_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE7_TEMPERATURE,
                                                  battery1_probe7_temperature)) {
-        battery_temperature_bytes[10] = battery1_probe7_temperature;
+        battery_temperature_bytes[11] = battery1_probe7_temperature;
     }
     uint8_t battery1_probe8_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE8_TEMPERATURE,
                                                  battery1_probe8_temperature)) {
-        battery_temperature_bytes[11] = battery1_probe8_temperature;
+        battery_temperature_bytes[12] = battery1_probe8_temperature;
     }
     uint8_t battery1_probe9_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE9_TEMPERATURE,
                                                  battery1_probe9_temperature)) {
-        battery_temperature_bytes[12] = battery1_probe9_temperature;
+        battery_temperature_bytes[13] = battery1_probe9_temperature;
     }
     uint8_t battery1_probe10_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE10_TEMPERATURE,
                                                  battery1_probe10_temperature)) {
-        battery_temperature_bytes[13] = battery1_probe10_temperature;
+        battery_temperature_bytes[14] = battery1_probe10_temperature;
     }
     uint8_t battery1_probe11_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE11_TEMPERATURE,
                                                  battery1_probe11_temperature)) {
-        battery_temperature_bytes[14] = battery1_probe11_temperature;
+        battery_temperature_bytes[15] = battery1_probe11_temperature;
     }
     uint8_t battery1_probe12_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE12_TEMPERATURE,
                                                  battery1_probe12_temperature)) {
-        battery_temperature_bytes[15] = battery1_probe12_temperature;
+        battery_temperature_bytes[16] = battery1_probe12_temperature;
     }
     uint8_t battery1_probe13_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE13_TEMPERATURE,
                                                  battery1_probe13_temperature)) {
-        battery_temperature_bytes[16] = battery1_probe13_temperature;
+        battery_temperature_bytes[17] = battery1_probe13_temperature;
     }
     uint8_t battery1_probe14_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE14_TEMPERATURE,
                                                  battery1_probe14_temperature)) {
-        battery_temperature_bytes[17] = battery1_probe14_temperature;
+        battery_temperature_bytes[18] = battery1_probe14_temperature;
     }
     uint8_t battery1_probe15_temperature;
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_BATTERY1_PROBE15_TEMPERATURE,
                                                  battery1_probe15_temperature)) {
-        battery_temperature_bytes[18] = battery1_probe15_temperature;
+        battery_temperature_bytes[19] = battery1_probe15_temperature;
     }
     return battery_temperature_bytes;
 }
@@ -808,7 +785,6 @@ std::vector<uint8_t> RsmsClient::build_vehicle_logout() {
 }
 
 uint8_t RsmsClient::calculate_check_code(std::vector<uint8_t> data_unit) {
-    spdlog::debug("计算长度[{}]", data_unit.size());
     if (data_unit.empty()) {
         return 0;
     }

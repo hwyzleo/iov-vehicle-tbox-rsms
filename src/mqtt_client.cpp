@@ -86,11 +86,32 @@ bool MqttClient::publish(int &mid, const std::string &topic, const void *payload
     if (!is_connected_) {
         return false;
     }
-    std::string base64_payload = hwyz::Utils::base64_encode(
-            std::string(static_cast<const char *>(payload), payload_len));
-    int rc = mosquittopp::publish(&mid, topic.c_str(), static_cast<int>(base64_payload.length()),
-                                  base64_payload.c_str(), qos, false);
-    spdlog::info("发送[{}]消息[{}]至主题[{}]QOS[{}]", mid, base64_payload, topic, qos);
+    int rc = mosquittopp::publish(&mid, topic.c_str(), payload_len, payload, qos, false);
+    std::vector<uint8_t> payload_vector(
+            static_cast<const uint8_t *>(payload),
+            static_cast<const uint8_t *>(payload) + payload_len
+    );
+    std::string hex_payload = hwyz::Utils::bytes_to_hex(payload_vector, true);
+    spdlog::info("发送[{}]消息至主题[{}]QOS[{}]", mid, topic, qos);
+    std::cout << hex_payload << std::endl;
+    if (rc == MOSQ_ERR_SUCCESS) {
+        cv_loop_.notify_all();
+        return true;
+    }
+    return false;
+}
+
+bool MqttClient::publish(int &mid, const std::string &topic, std::vector<uint8_t> *payload, int qos) {
+    if (nullptr == payload) {
+        return false;
+    }
+    if (!is_connected_) {
+        return false;
+    }
+    int rc = mosquittopp::publish(&mid, topic.c_str(), static_cast<int>(payload->size()), payload->data(), qos, false);
+    std::string hex_payload = hwyz::Utils::bytes_to_hex(*payload, true);
+    spdlog::info("发送[{}]消息至主题[{}]QOS[{}]", mid, topic, qos);
+    std::cout << hex_payload << std::endl;
     if (rc == MOSQ_ERR_SUCCESS) {
         cv_loop_.notify_all();
         return true;
