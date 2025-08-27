@@ -165,12 +165,37 @@ bool RsmsClient::login() {
 bool RsmsClient::collect_signal() {
     spdlog::debug("采集信号数据");
     std::vector<uint8_t> realtime_signal = build_realtime_signal();
-    if (is_tsp_login_ && is_vehicle_login_) {
-        int mid = 0;
-        std::vector<uint8_t> message = build_message(REALTIME_REPORT, realtime_signal);
-        return MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
+    if (reserve_messages_.size() >= max_reserve_messages_) {
+        reserve_messages_.pop_front();
     }
-    reissue_messages_.push_back(realtime_signal);
+    reserve_messages_.push_back(realtime_signal);
+    long long now = hwyz::Utils::get_current_timestamp_sec();
+    if (is_alarm3()) {
+        if (last_alarm_timestamp_ == 0) {
+            spdlog::warn("发生三级报警[{}]", now);
+            last_alarm_timestamp_ = now;
+            for (const auto &reserved_message: reserve_messages_) {
+                reissue_messages_.push_back(reserved_message);
+            }
+        }
+        if (now - last_alarm_timestamp_ <= 30) {
+            spdlog::warn("采集间隔调整为1秒[{}]", now);
+            collect_interval_ = 1;
+        }
+    } else if (last_alarm_timestamp_ > 0 && now - last_alarm_timestamp_ > 30) {
+        last_alarm_timestamp_ = 0;
+        collect_interval_ = 10;
+    }
+    if (now - last_collect_timestamp_ >= collect_interval_) {
+        last_collect_timestamp_ = now;
+        if (is_tsp_login_ && is_vehicle_login_) {
+            int mid = 0;
+            std::vector<uint8_t> message = build_message(REALTIME_REPORT, realtime_signal);
+            return MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
+        }
+        reissue_messages_.push_back(realtime_signal);
+    }
+    return true;
 }
 
 void RsmsClient::logout() {
@@ -558,6 +583,14 @@ std::vector<uint8_t> RsmsClient::build_alarm() {
     return alarm_bytes;
 }
 
+bool RsmsClient::is_alarm3() {
+    uint8_t max_alarm_level;
+    if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_MAX_ALARM_LEVEL, max_alarm_level)) {
+        return max_alarm_level == 3;
+    }
+    return false;
+}
+
 std::vector<uint8_t> RsmsClient::build_battery_voltage() {
     std::vector<uint8_t> battery_voltage_bytes(44);
     battery_voltage_bytes[0] = 0x08; // 可充电储能装置电压数据
@@ -839,7 +872,7 @@ std::vector<uint8_t> RsmsClient::string_to_bytes(std::string value) {
 void RsmsClient::collect_thread() {
     while (is_start_) {
         collect_signal();
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 
@@ -850,7 +883,7 @@ void RsmsClient::reissue_thread() {
             std::vector<uint8_t> message = build_message(REISSUE_REPORT, realtime_signal);
             MqttClient::get_instance().publish(mid, mqtt_topic_, message.data(), message.size(), 1);
         }
-        std::this_thread::sleep_for(std::chrono::seconds(10));
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
 

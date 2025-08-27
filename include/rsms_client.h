@@ -4,6 +4,7 @@
 
 #ifndef RSMSAPP_RSMS_CLIENT_H
 #define RSMSAPP_RSMS_CLIENT_H
+
 #include <vector>
 #include <cstdint>
 #include <map>
@@ -110,12 +111,22 @@ private:
     std::string config_file_path_ = "/tmp/rsms_client.config";
     // 数据文件路径
     std::string data_file_path_ = "/tmp/rsms_message.dat";
+    // 最后一次采集时间
+    long long last_collect_timestamp_ = 0;
+    // 最后一次三级报警时间
+    long long last_alarm_timestamp_ = 0;
+    // 采集间隔
+    int collect_interval_ = 10;
     // 实时采集信号的线程
     std::thread collect_thread_;
     // 补发信号的线程
     std::thread reissue_thread_;
     // 补发消息
     std::vector<std::vector<uint8_t>> reissue_messages_;
+    // 预留消息用于故障发生时补发
+    std::deque<std::vector<uint8_t>> reserve_messages_;
+    // 预留消息数量上限
+    uint8_t max_reserve_messages_ = 30;
     // MQTT主题
     std::string mqtt_topic_ = "TSP/RSMS";
 
@@ -162,6 +173,8 @@ private:
      * @return 是否成功
      */
     bool collect_signal();
+
+    bool add_alarm_message(const std::vector<uint8_t> &message);
 
     /**
      * 登出
@@ -224,6 +237,12 @@ private:
     std::vector<uint8_t> build_alarm();
 
     /**
+     * 是否三级报警
+     * @return 是否三级报警
+     */
+    bool is_alarm3();
+
+    /**
      * 构造可充电储能装置电压数据信息体
      * @return 可充电储能装置电压数据信息体
      */
@@ -254,7 +273,7 @@ private:
      * @param data_unit 数据单元
      * @return 消息报文
      */
-    std::vector<uint8_t> build_message(command_flag_t command_flag, const std::vector<uint8_t>& data_unit);
+    std::vector<uint8_t> build_message(command_flag_t command_flag, const std::vector<uint8_t> &data_unit);
 
     /**
      * 双字节整形转数组（大端模式）
@@ -287,4 +306,5 @@ private:
      */
     void reissue_thread();
 };
+
 #endif //RSMSAPP_RSMS_CLIENT_H
