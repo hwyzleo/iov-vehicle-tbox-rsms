@@ -305,11 +305,11 @@ std::vector<uint8_t> RsmsClient::build_vehicle_data() {
     if (RsmsSignalCache::get_instance().get_byte(signal_t::SIGNAL_GEAR, gear)) {
         bool driving;
         if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_DRIVING, driving)) {
-            gear = (driving ? 1 : 0 << 5) + gear;
+            gear = ((driving ? 1 : 0) << 5) + gear;
         }
         bool braking;
         if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_BRAKING, braking)) {
-            gear = (driving ? 1 : 0 << 4) + gear;
+            gear = ((braking ? 1 : 0) << 4) + gear;
         }
         vehicle_data_bytes[16] = gear;
     }
@@ -423,7 +423,7 @@ std::vector<uint8_t> RsmsClient::build_position() {
     position_bytes[0] = 0x05; // 车辆位置数据
     bool position_valid;
     if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_POSITION_VALID, position_valid)) {
-        uint8_t position = (position_valid) ? 1 : 0;
+        uint8_t position = (position_valid) ? 0 : 1;
         bool south_latitude;
         if (RsmsSignalCache::get_instance().get_boolean(signal_t::SIGNAL_SOUTH_LATITUDE, south_latitude)) {
             position = position + ((south_latitude ? 1 : 0) << 1);
