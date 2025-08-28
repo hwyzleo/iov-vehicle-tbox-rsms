@@ -18,9 +18,9 @@ protected:
     }
 
     void cleanup() override {
+        RsmsClient::get_instance().stop();
         MqttClient::get_instance().stop();
         RsmsSignalCache::get_instance().stop();
-        RsmsClient::get_instance().stop();
     }
 
     int execute() override {

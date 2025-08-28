@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstdint>
 #include <map>
+#include <mutex>
 
 // 国标命令标识
 enum command_flag_t {
@@ -119,10 +120,14 @@ private:
     int collect_interval_ = 10;
     // 实时采集信号的线程
     std::thread collect_thread_;
+    // 补发信号锁
+    std::mutex reissue_mutex_;
     // 补发信号的线程
     std::thread reissue_thread_;
     // 补发消息
-    std::vector<std::vector<uint8_t>> reissue_messages_;
+    std::deque<std::vector<uint8_t>> reissue_messages_;
+    // 每秒补发数量
+    int reissue_count_per_second_ = 100;
     // 预留消息用于故障发生时补发
     std::deque<std::vector<uint8_t>> reserve_messages_;
     // 预留消息数量上限
@@ -174,8 +179,6 @@ private:
      */
     bool collect_signal();
 
-    bool add_alarm_message(const std::vector<uint8_t> &message);
-
     /**
      * 登出
      * @return 是否成功
@@ -211,12 +214,6 @@ private:
      * @return 驱动电机信息体
      */
     std::vector<uint8_t> build_drive_motor();
-
-    /**
-     * 构造发动机信息体
-     * @return 发动机信息体
-     */
-    std::vector<uint8_t> build_engine();
 
     /**
      * 构造车辆位置信息体

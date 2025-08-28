@@ -70,6 +70,7 @@ void MqttClient::stop() {
     if (!is_started_) {
         return;
     }
+    spdlog::info("停止MQTT客户端");
     this->disconnect();
     mosqpp::lib_cleanup();
     is_started_ = false;

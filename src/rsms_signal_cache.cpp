@@ -22,6 +22,7 @@ bool RsmsSignalCache::start() {
 }
 
 void RsmsSignalCache::stop() {
+    spdlog::info("停止国标信号缓存实例");
     is_running_ = false;
     if (write_thread_.joinable()) {
         write_thread_.join();

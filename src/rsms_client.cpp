@@ -130,9 +130,7 @@ bool RsmsClient::start() {
         login();
     }
     is_start_ = true;
-    spdlog::info("初始化采集线程");
     collect_thread_ = std::thread(&RsmsClient::collect_thread, this);
-    spdlog::info("初始化补发线程");
     reissue_thread_ = std::thread(&RsmsClient::reissue_thread, this);
     return true;
 }
@@ -147,6 +145,7 @@ bool RsmsClient::set_tsp_login() {
 }
 
 void RsmsClient::stop() {
+    spdlog::info("停止国标客户端实例");
     logout();
     is_start_ = false;
     is_vehicle_login_ = false;
@@ -199,6 +198,7 @@ bool RsmsClient::collect_signal() {
 }
 
 void RsmsClient::logout() {
+    spdlog::info("车辆登出");
     std::vector<uint8_t> vehicle_logout = build_vehicle_logout();
     std::vector<uint8_t> message = build_message(VEHICLE_LOGOUT, vehicle_logout);
     int mid = 0;
@@ -870,6 +870,7 @@ std::vector<uint8_t> RsmsClient::string_to_bytes(std::string value) {
 }
 
 void RsmsClient::collect_thread() {
+    spdlog::info("初始化采集线程");
     while (is_start_) {
         collect_signal();
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -877,11 +878,28 @@ void RsmsClient::collect_thread() {
 }
 
 void RsmsClient::reissue_thread() {
-    while (is_tsp_login_ && is_vehicle_login_) {
-        for (const auto &realtime_signal: reissue_messages_) {
-            int mid = 0;
-            std::vector<uint8_t> message = build_message(REISSUE_REPORT, realtime_signal);
-            MqttClient::get_instance().publish(mid, mqtt_topic_, message.data(), message.size(), 1);
+    spdlog::info("初始化补发线程");
+    while (is_start_) {
+        if (is_tsp_login_ && is_vehicle_login_) {
+            std::vector<std::vector<uint8_t>> messages_to_send;
+            {
+                std::unique_lock<std::mutex> lock(reissue_mutex_);
+                int count = 0;
+                while (!reissue_messages_.empty() && count < reissue_count_per_second_) {
+                    messages_to_send.push_back(reissue_messages_.front());
+                    reissue_messages_.pop_front();
+                    count++;
+                }
+            }
+            if (!messages_to_send.empty()) {
+                spdlog::info("开始补发数据[{}]，数量[{}]",
+                             hwyz::Utils::get_current_timestamp_sec(), messages_to_send.size());
+                for (const auto &realtime_signal: messages_to_send) {
+                    int mid = 0;
+                    std::vector<uint8_t> message = build_message(REISSUE_REPORT, realtime_signal);
+                    MqttClient::get_instance().publish(mid, mqtt_topic_, &message, 1);
+                }
+            }
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
